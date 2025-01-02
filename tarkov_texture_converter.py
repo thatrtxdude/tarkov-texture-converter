@@ -28,7 +28,7 @@ class TextureType(Enum):
     GLOSS = "gloss"
 
 class TextureProcessor:
-    SUPPORTED_FORMATS: frozenset[str] = frozenset({'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp'})
+    SUPPORTED_FORMATS: frozenset[str] = frozenset({'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.tga'})
     DEFAULT_CHUNK_SIZE: int = 1024
 
     def __init__(self, input_folder: str, max_workers: Optional[int] = None, png_optimize: bool = True):
