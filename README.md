@@ -1,6 +1,6 @@
-# Texture Processor
+# Tarkov Texture Converter
 
-A Python script for batch processing texture maps (normal, diffuse, gloss) with parallel processing support.
+A Python script for batch processing Unity/Tarkov texture maps (normal, diffuse, gloss) with parallel processing support.
 
 ## Features
 - Converts normal maps to RGBA format with channel reorganization
