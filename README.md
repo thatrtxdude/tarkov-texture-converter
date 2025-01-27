@@ -1,52 +1,44 @@
-# Texture Processor for Tarkov Assets
+# Texture Processor
 
-## Overview
-This tool processes texture files used in Tarkov assets, converting them into standardized formats for easier handling and editing. It supports normal maps, diffuse maps, and gloss maps, applying specific transformations for each type.
+A Python script for batch processing texture maps (normal, diffuse, gloss) with parallel processing support.
 
 ## Features
-- Automatic identification of texture types based on filenames.
-- Efficient multi-threaded processing using `ThreadPoolExecutor`.
-- Support for common texture formats: `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`, and `.bmp`.
-- Outputs organized into a separate folder with unique naming to avoid overwrites.
-- Specifically optimized for handling Tarkov assets.
+- Converts normal maps to RGBA format with channel reorganization
+- Splits diffuse maps into color+alpha textures
+- Converts gloss maps to roughness maps
+- Preserves alpha channels
+- Multi-core processing
+- PNG optimization option
 
-## Requirements
-- Python 3.8+
-- Required libraries:
-  - `Pillow`
-  - `numpy`
-  - `tqdm`
+## Prerequisites
+- Python 3.7+
+- `Pillow`, `numpy`, `tqdm`
 
-Install dependencies using pip:
+Install dependencies:
 ```bash
 pip install pillow numpy tqdm
 ```
 
-## How to Use
-1. Run the script using Python:
-   ```bash
-   python tarkov_texture_converter.py
-   ```
+## Usage
+1. Run the script:
+```bash
+python texture_processor.py
+```
+2. Select input folder via GUI dialog
+3. Processing happens automatically
+4. Results appear in `converted_textures` subfolder
 
-2. When prompted, select the folder containing the texture files you want to process.
+Output structure:
+- Normal maps: `*_converted.png`
+- Diffuse maps: `*_color.png` + `*_alpha.png`
+- Roughness maps: `*_roughness.png`
 
-3. The tool will:
-   - Identify and process supported textures.
-   - Save the processed textures in a new folder within the selected directory.
+Add `png_optimize=True` to `TextureProcessor` initialization for smaller PNG files (slower processing).
 
-4. Once processing is complete, the application will close automatically.
-
-### Notes
-- Make sure your texture files are named according to their type (e.g., `_diff`, `_gloss`) for proper detection.
-- The tool utilizes half of your available CPU cores by default for optimal performance.
-
-## Output
-- Normal maps are converted to a standard format.
-- Diffuse maps are split into color and alpha components.
-- Gloss maps are inverted.
-- Processed textures are saved as `.png` files.
+## Notes
+- Supported formats: PNG, JPG, JPEG, TIF, TIFF, BMP, TGA
+- Files must follow naming convention: `*_diff`, `*_gloss` for special processing
+- Normal maps without suffixes get channel reorganization (A→R, G→G, R→B)
 
 ## License
 This project is released under the MIT License.
-
-
