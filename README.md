@@ -22,7 +22,7 @@ pip install pillow numpy tqdm
 ## Usage
 1. Run the script:
 ```bash
-python texture_processor.py
+python tarkov_texture_converter.py
 ```
 2. Select input folder via GUI dialog
 3. Processing happens automatically
