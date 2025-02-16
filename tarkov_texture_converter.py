@@ -54,7 +54,7 @@ class TextureProcessor:
     @lru_cache(maxsize=None)
     def _get_texture_type(filename: str) -> Optional[TextureType]:
         base_name = os.path.splitext(filename)[0].lower()
-        if base_name.endswith("_diff"):
+        if base_name.endswith("_diff") or base_name.endswith("_d") or base_name.endswith("_albedo"):
             return TextureType.DIFFUSE
         elif base_name.endswith("_gloss"):
             return TextureType.GLOSS
