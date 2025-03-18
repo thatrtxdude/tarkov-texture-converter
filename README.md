@@ -37,6 +37,7 @@ Add `png_optimize=True` to `TextureProcessor` initialization for smaller PNG fil
 
 ## Usage - SPECGLOS Mode
 IMPORTANT: This is supposed to be used with this: https://hub.sp-tarkov.com/files/file/2724-tarkin-item-exporter/#overview
+
 Run the script with following argument appended at the end:
 ```bash
 python tarkov_texture_converter.py --tarkin
