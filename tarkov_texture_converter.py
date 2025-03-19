@@ -274,7 +274,7 @@ def main():
 
     result_message = f"Successful: {successful}\nFailed: {failed}\nSkipped: {skipped}\nExecution Time: {formatted_time}"
     logger.info(f"Processing complete. Successful: {successful} Failed: {failed} Skipped: {skipped} time: {formatted_time}")
-    messagebox.showinfo("Complete", result_message)
+    #messagebox.showinfo("Complete", result_message)
     
     root.destroy()
     exit(0)
