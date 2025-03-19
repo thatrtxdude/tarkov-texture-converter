@@ -13,22 +13,26 @@ from typing import Tuple, Optional, Set
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
+# Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+# Graceful shutdown handler
 def handle_exit(signum, frame):
-    logger.info("Gracefully shutting down...")
+    logger.info("shutting down")
     exit(0)
 
 signal.signal(signal.SIGINT, handle_exit)
 signal.signal(signal.SIGTERM, handle_exit)
 
+# Enum for texture types
 class TextureType(Enum):
     NORMAL = "normal"
     DIFFUSE = "diff"
     GLOSS = "gloss"
     SPECGLOS = "specglos"
 
+# Main texture processing class
 class TextureProcessor:
     SUPPORTED_FORMATS: Set[str] = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.tga'}
     DEFAULT_CHUNK_SIZE: int = 1024
@@ -40,9 +44,9 @@ class TextureProcessor:
         self.png_optimize = png_optimize
         self.tarkin_mode = tarkin_mode
         os.makedirs(self.output_folder, exist_ok=True)
-        logger.info(f"Output folder: {self.output_folder}")
+        logger.info(f"output folder {self.output_folder}")
         if self.tarkin_mode:
-            logger.info("running with tarkin/specglos mode")
+            logger.info("running in tarkin/specglos mode")
 
     def _get_unique_output_folder(self) -> str:
         base_output = os.path.join(self.input_folder, "converted_textures")
@@ -57,20 +61,24 @@ class TextureProcessor:
     @staticmethod
     def _get_texture_type(filename: str, tarkin_mode: bool) -> Optional[TextureType]:
         base_name = os.path.splitext(filename)[0].lower()
-        # Diffuse textures are detected in both modes
-        if any(base_name.endswith(suffix) for suffix in ["_diff", "_d", "_albedo"]):
-            return TextureType.DIFFUSE
-        if tarkin_mode:
-            # In SPECGLOS mode, we ignore files ending with _gloss
-            if base_name.endswith("_gloss"):
-                return None  # Skip these files
-            if base_name.endswith("_specglos"):
+        parts = base_name.split('_')
+        for part in reversed(parts):
+            if part in ["n", "normal", "nrm"]:
+                return TextureType.NORMAL
+            if part in ["d", "diff", "diffuse", "albedo"]:
+                return TextureType.DIFFUSE
+            if part in ["g", "gloss"]:
+                if tarkin_mode:
+                    return None
+                else:
+                    return TextureType.GLOSS
+            if tarkin_mode and part in ["sg", "specglos"]:
                 return TextureType.SPECGLOS
-            # Everything else is treated as a normal texture (for simplified normal map processing)
-            return TextureType.NORMAL
+        if tarkin_mode:
+            logger.info(f"no known suffix for {filename}, skipping in specglos mode")
+            return None
         else:
-            if base_name.endswith("_gloss"):
-                return TextureType.GLOSS
+            logger.warning(f"no known suffix found for {filename}, assuming normal map.")
             return TextureType.NORMAL
 
     @staticmethod
@@ -118,9 +126,7 @@ class TextureProcessor:
 
     @staticmethod
     def _process_specglos_map_split(img_array: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        # Specular: use RGB channels and force full alpha
         specular = np.dstack((img_array[:, :, :3], np.full(img_array.shape[:2], 255, dtype=np.uint8)))
-        # Roughness: use inverted alpha channel as grayscale with full alpha
         inverted_alpha = 255 - img_array[:, :, 3]
         roughness = np.dstack((inverted_alpha, inverted_alpha, inverted_alpha, np.full(img_array.shape[:2], 255, dtype=np.uint8)))
         return specular, roughness
@@ -130,10 +136,10 @@ class TextureProcessor:
         try:
             Image.fromarray(image_array, 'RGBA').save(output_path, 'PNG', optimize=png_optimize)
         except Exception as e:
-            logger.error(f"Failed to save image to {output_path}: {e}")
+            raise RuntimeError(f"Failed to save image to {output_path}: {e}")
 
     @staticmethod
-    def process_texture(input_path: str, output_folder: str, png_optimize: bool, tarkin_mode: bool) -> Tuple[bool, Optional[str]]:
+    def process_texture(input_path: str, output_folder: str, png_optimize: bool, tarkin_mode: bool) -> Tuple[str, Optional[str]]:
         try:
             with Image.open(input_path) as img:
                 img = img.convert('RGBA') if img.mode != 'RGBA' else img
@@ -142,32 +148,29 @@ class TextureProcessor:
                 texture_type = TextureProcessor._get_texture_type(filename, tarkin_mode)
                 base_name = os.path.splitext(filename)[0]
                 
-                # Skip file if texture_type is None (e.g. _gloss textures in SPECGLOS mode)
                 if texture_type is None:
-                    logger.info(f"skipping file {filename} in SPECGLOS mode")
-                    return (True, f"skipped {filename}")
+                    return ("skipped", f"skipped {filename}")
 
                 if texture_type == TextureType.DIFFUSE:
                     if tarkin_mode:
                         color_array = TextureProcessor._process_diffuse_map_tarkin(img_array)
                         color_path = os.path.join(output_folder, f"{base_name}_color.png")
                         TextureProcessor._save_image(color_array, color_path, png_optimize)
-                        return (True, color_path)
+                        return ("success", color_path)
                     else:
                         color_array, alpha_array = TextureProcessor._process_diffuse_map_standard(img_array)
                         color_path = os.path.join(output_folder, f"{base_name}_color.png")
                         alpha_path = os.path.join(output_folder, f"{base_name}_alpha.png")
                         TextureProcessor._save_image(color_array, color_path, png_optimize)
                         TextureProcessor._save_image(alpha_array, alpha_path, png_optimize)
-                        return (True, color_path)
+                        return ("success", color_path)
                 elif texture_type == TextureType.SPECGLOS:
-                    # Split the specular (RGB) and the inverted alpha (roughness)
                     specular, roughness = TextureProcessor._process_specglos_map_split(img_array)
                     specular_path = os.path.join(output_folder, f"{base_name}_spec.png")
                     roughness_path = os.path.join(output_folder, f"{base_name}_roughness.png")
                     TextureProcessor._save_image(specular, specular_path, png_optimize)
                     TextureProcessor._save_image(roughness, roughness_path, png_optimize)
-                    return (True, specular_path)
+                    return ("success", specular_path)
                 elif texture_type == TextureType.NORMAL:
                     if tarkin_mode:
                         processed_array = TextureProcessor._process_normal_map_tarkin(img_array)
@@ -175,19 +178,19 @@ class TextureProcessor:
                         processed_array = TextureProcessor._process_normal_map_standard(img_array)
                     output_path = os.path.join(output_folder, f"{base_name}_converted.png")
                     TextureProcessor._save_image(processed_array, output_path, png_optimize)
-                    return (True, output_path)
+                    return ("success", output_path)
                 elif texture_type == TextureType.GLOSS:
                     processed_array = TextureProcessor._process_gloss_map(img_array)
                     output_path = os.path.join(output_folder, f"{base_name}_roughness.png")
                     TextureProcessor._save_image(processed_array, output_path, png_optimize)
-                    return (True, output_path)
+                    return ("success", output_path)
                 else:
-                    return (False, "Unknown texture type")
+                    return ("failed", "unknown texture type")
         except Exception as e:
-            logger.error(f"Error processing {os.path.basename(input_path)}: {e}")
-            return (False, str(e))
+            logger.error(f"error processing {os.path.basename(input_path)}: {e}")
+            return ("failed", str(e))
 
-    def process_all(self) -> Tuple[int, int]:
+    def process_all(self) -> Tuple[int, int, int]:
         filenames = []
         with os.scandir(self.input_folder) as entries:
             for entry in entries:
@@ -196,12 +199,13 @@ class TextureProcessor:
                     if ext in self.SUPPORTED_FORMATS:
                         filenames.append(entry.name)
         if not filenames:
-            logger.info("No supported files found.")
-            return (0, 0)
+            logger.info("no supported files found")
+            return (0, 0, 0)
 
-        logger.info(f"Processing {len(filenames)} files with {self.max_workers} workers.")
+        logger.info(f"Processing {len(filenames)} files with {self.max_workers} workers")
         successful_count = 0
         failed_count = 0
+        skipped_count = 0
 
         with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {
@@ -218,34 +222,40 @@ class TextureProcessor:
                 for future in as_completed(futures):
                     filename = futures[future]
                     try:
-                        success, result = future.result()
-                        if success:
+                        status, result = future.result()
+                        if status == "success":
                             successful_count += 1
-                        else:
+                        elif status == "failed":
                             failed_count += 1
                             logger.error(f"Failed {filename}: {result}")
+                        elif status == "skipped":
+                            skipped_count += 1
+                            logger.info(f"skipped {filename}")
                     except Exception as e:
                         failed_count += 1
-                        logger.error(f"Unexpected error in {filename}: {e}")
+                        logger.error(f"unexpected error in {filename}: {e}")
                     pbar.update(1)
 
-        return (successful_count, failed_count)
+        return (successful_count, failed_count, skipped_count)
 
+# Utility function to format execution time
 def format_execution_time(seconds: float) -> str:
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{int(hours)}h {int(minutes)}m {seconds:.2f}s"
 
+# Main execution function
 def main():
     parser = argparse.ArgumentParser(description="Tarkov Texture Converter")
-    parser.add_argument("--tarkin", action="store_true", help="launch in SPECGLOS mode")
+    parser.add_argument("--tarkin", action="store_true", help="Launch in SPECGLOS mode")
+    parser.add_argument("input_folder", nargs='?', help="Input folder path (optional, uses GUI if not provided)")
     args = parser.parse_args()
 
     root = tk.Tk()
     root.withdraw()
-    folder_path = filedialog.askdirectory(title="Select Folder with Textures")
+    folder_path = args.input_folder if args.input_folder else filedialog.askdirectory(title="Select Folder with Textures")
     if not folder_path:
-        logger.info("No folder selected. Exiting.")
+        logger.info("no folder selected exiting")
         return
 
     processor = TextureProcessor(
@@ -256,14 +266,14 @@ def main():
     )
     
     start_time = time.time()
-    successful, failed = processor.process_all()
+    successful, failed, skipped = processor.process_all()
     end_time = time.time()
     
     elapsed_time = end_time - start_time
     formatted_time = format_execution_time(elapsed_time)
 
-    result_message = f"Successful: {successful}\nFailed: {failed}\nExecution Time: {formatted_time}"
-    logger.info(f"Processing complete. {result_message.replace(chr(10), ', ')}")
+    result_message = f"Successful: {successful}\nFailed: {failed}\nSkipped: {skipped}\nExecution Time: {formatted_time}"
+    logger.info(f"Processing complete. Successful: {successful} Failed: {failed} Skipped: {skipped} time: {formatted_time}")
     messagebox.showinfo("Complete", result_message)
     
     root.destroy()
