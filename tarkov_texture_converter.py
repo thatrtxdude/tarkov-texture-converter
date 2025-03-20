@@ -7,17 +7,15 @@ import time
 from PIL import Image
 import numpy as np
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk, IntVar, BooleanVar
 from enum import Enum
 from typing import Tuple, Optional, Set
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# Graceful shutdown handler
 def handle_exit(signum, frame):
     logger.info("shutting down")
     exit(0)
@@ -25,14 +23,12 @@ def handle_exit(signum, frame):
 signal.signal(signal.SIGINT, handle_exit)
 signal.signal(signal.SIGTERM, handle_exit)
 
-# Enum for texture types
 class TextureType(Enum):
     NORMAL = "normal"
     DIFFUSE = "diff"
     GLOSS = "gloss"
     SPECGLOS = "specglos"
 
-# Main texture processing class
 class TextureProcessor:
     SUPPORTED_FORMATS: Set[str] = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.tga'}
     DEFAULT_CHUNK_SIZE: int = 1024
@@ -84,10 +80,10 @@ class TextureProcessor:
     @staticmethod
     def _process_normal_map_standard(img_array: np.ndarray) -> np.ndarray:
         processed_array = np.empty_like(img_array, dtype=np.uint8)
-        processed_array[:, :, 0] = img_array[:, :, 3]  # A to R
-        processed_array[:, :, 1] = img_array[:, :, 1]  # G remains
-        processed_array[:, :, 2] = img_array[:, :, 0]  # R to B
-        processed_array[:, :, 3] = 255  # Set Alpha to 255
+        processed_array[:, :, 0] = img_array[:, :, 3]
+        processed_array[:, :, 1] = img_array[:, :, 1]
+        processed_array[:, :, 2] = img_array[:, :, 0]
+        processed_array[:, :, 3] = 255
         return processed_array
 
     @staticmethod
@@ -147,7 +143,7 @@ class TextureProcessor:
                 filename = os.path.basename(input_path)
                 texture_type = TextureProcessor._get_texture_type(filename, tarkin_mode)
                 base_name = os.path.splitext(filename)[0]
-                
+
                 if texture_type is None:
                     return ("skipped", f"skipped {filename}")
 
@@ -190,7 +186,7 @@ class TextureProcessor:
             logger.error(f"error processing {os.path.basename(input_path)}: {e}")
             return ("failed", str(e))
 
-    def process_all(self) -> Tuple[int, int, int]:
+    def process_all(self, progress_callback=None) -> Tuple[int, int, int]:
         filenames = []
         with os.scandir(self.input_folder) as entries:
             for entry in entries:
@@ -218,7 +214,10 @@ class TextureProcessor:
                 ): filename for filename in filenames
             }
 
-            with tqdm(total=len(filenames), desc="Processing Textures") as pbar:
+            total_files = len(filenames)
+            processed_files = 0
+
+            if progress_callback:
                 for future in as_completed(futures):
                     filename = futures[future]
                     try:
@@ -234,50 +233,215 @@ class TextureProcessor:
                     except Exception as e:
                         failed_count += 1
                         logger.error(f"unexpected error in {filename}: {e}")
-                    pbar.update(1)
+
+                    processed_files += 1
+                    progress_callback(processed_files, total_files)
+            else:
+                with tqdm(total=len(filenames), desc="Processing Textures") as pbar:
+                    for future in as_completed(futures):
+                        filename = futures[future]
+                        try:
+                            status, result = future.result()
+                            if status == "success":
+                                successful_count += 1
+                            elif status == "failed":
+                                failed_count += 1
+                                logger.error(f"Failed {filename}: {result}")
+                            elif status == "skipped":
+                                skipped_count += 1
+                                logger.info(f"skipped {filename}")
+                        except Exception as e:
+                            failed_count += 1
+                            logger.error(f"unexpected error in {filename}: {e}")
+                        pbar.update(1)
 
         return (successful_count, failed_count, skipped_count)
 
-# Utility function to format execution time
+class TextureProcessorApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Tarkov Texture Converter")
+        self.geometry("512x600")
+
+        self.configure(padx=20, pady=20)
+        self.folder_path = tk.StringVar()
+        self.max_workers = IntVar(value=os.cpu_count() or 1)
+        self.png_optimize = BooleanVar(value=False)
+        self.tarkin_mode = BooleanVar(value=False)
+        self.is_processing = False
+
+        self.create_widgets()
+
+    def create_widgets(self):
+        folder_frame = ttk.Frame(self)
+        folder_frame.pack(fill=tk.X, pady=10)
+        ttk.Label(folder_frame, text="Input Folder:").pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Entry(folder_frame, textvariable=self.folder_path, width=50).pack(side=tk.LEFT, padx=(0, 5), fill=tk.X, expand=True)
+        ttk.Button(folder_frame, text="Browse", command=self.browse_folder).pack(side=tk.RIGHT)
+
+        options_frame = ttk.LabelFrame(self, text="Processing Options")
+        options_frame.pack(fill=tk.X, pady=10)
+
+        worker_frame = ttk.Frame(options_frame)
+        worker_frame.pack(fill=tk.X, pady=5, padx=10)
+        ttk.Label(worker_frame, text="Threads to use:").pack(side=tk.LEFT)
+        ttk.Spinbox(worker_frame, from_=1, to=32, textvariable=self.max_workers, width=5).pack(side=tk.LEFT, padx=5)
+
+        ttk.Checkbutton(options_frame, text="Optimize PNG Output", variable=self.png_optimize).pack(anchor=tk.W, pady=5, padx=10)
+
+        ttk.Checkbutton(options_frame, text="SPECGLOS (Tarkin Item Exporter) Mode", variable=self.tarkin_mode).pack(anchor=tk.W, pady=5, padx=10)
+
+        progress_frame = ttk.LabelFrame(self, text="Progress")
+        progress_frame.pack(fill=tk.X, pady=10)
+
+        self.progress_bar = ttk.Progressbar(progress_frame, orient=tk.HORIZONTAL, length=100, mode='determinate')
+        self.progress_bar.pack(fill=tk.X, pady=10, padx=10)
+
+        self.status_label = ttk.Label(progress_frame, text="Ready")
+        self.status_label.pack(pady=5)
+
+        button_frame = ttk.Frame(self)
+        button_frame.pack(fill=tk.X, pady=10)
+
+        self.start_button = ttk.Button(button_frame, text="Start Processing", command=self.start_processing)
+        self.start_button.pack(side=tk.RIGHT, padx=5)
+
+        log_frame = ttk.LabelFrame(self, text="Process Log")
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+
+        self.log_text = tk.Text(log_frame, height=10, state=tk.DISABLED, wrap=tk.WORD)
+        self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.log_text.config(yscrollcommand=scrollbar.set)
+
+        self.log_handler = self.TextHandler(self.log_text)
+        logger.addHandler(self.log_handler)
+
+
+    def browse_folder(self):
+        folder = filedialog.askdirectory(title="Select Folder with Textures")
+        if folder:
+            self.folder_path.set(folder)
+
+    def start_processing(self):
+        if self.is_processing:
+            messagebox.showinfo("Processing", "Already processing textures. Please wait.")
+            return
+
+        folder_path = self.folder_path.get()
+        if not folder_path or not os.path.isdir(folder_path):
+            messagebox.showerror("Error", "Please select a valid folder")
+            return
+
+        self.is_processing = True
+        self.start_button.config(state=tk.DISABLED)
+        self.progress_bar['value'] = 0
+        self.status_label.config(text="Processing...")
+
+        processor = TextureProcessor(
+            folder_path,
+            max_workers=self.max_workers.get(),
+            png_optimize=self.png_optimize.get(),
+            tarkin_mode=self.tarkin_mode.get()
+        )
+
+        self.after(100, lambda: self.run_processing(processor))
+
+    def run_processing(self, processor):
+        def update_progress(processed, total):
+            progress = int((processed / total) * 100)
+            self.progress_bar['value'] = progress
+            self.status_label.config(text=f"Processing: {processed}/{total} files")
+            self.update_idletasks()
+
+        start_time = time.time()
+        try:
+            successful, failed, skipped = processor.process_all(update_progress)
+            end_time = time.time()
+
+            elapsed_time = end_time - start_time
+            formatted_time = format_execution_time(elapsed_time)
+
+            result_message = f"Processing complete.\nSuccessful: {successful}\nFailed: {failed}\nSkipped: {skipped}\nExecution Time: {formatted_time}"
+            self.status_label.config(text=f"Completed. S:{successful} F:{failed} SK:{skipped}")
+            logger.info(result_message)
+
+            messagebox.showinfo("Processing Complete", result_message)
+
+            output_folder = processor.output_folder
+            if os.path.exists(output_folder) and successful > 0:
+                if sys.platform == 'win32':
+                    os.startfile(output_folder)
+                elif sys.platform == 'darwin':
+                    os.system(f'open "{output_folder}"')
+                else:
+                    os.system(f'xdg-open "{output_folder}"')
+
+        except Exception as e:
+            logger.error(f"Error during processing: {e}")
+            messagebox.showerror("Error", f"An error occurred: {e}")
+
+        finally:
+            self.is_processing = False
+            self.start_button.config(state=tk.NORMAL)
+
+    class TextHandler(logging.Handler):
+        def __init__(self, text_widget):
+            logging.Handler.__init__(self)
+            self.text_widget = text_widget
+
+        def emit(self, record):
+            msg = self.format(record)
+
+            def append():
+                self.text_widget.configure(state=tk.NORMAL)
+                self.text_widget.insert(tk.END, msg + '\n')
+                self.text_widget.see(tk.END)
+                self.text_widget.configure(state=tk.DISABLED)
+
+            self.text_widget.after(0, append)
+
 def format_execution_time(seconds: float) -> str:
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{int(hours)}h {int(minutes)}m {seconds:.2f}s"
 
-# Main execution function
 def main():
     parser = argparse.ArgumentParser(description="Tarkov Texture Converter")
     parser.add_argument("--tarkin", action="store_true", help="Launch in SPECGLOS mode")
     parser.add_argument("input_folder", nargs='?', help="Input folder path (optional, uses GUI if not provided)")
     args = parser.parse_args()
 
-    root = tk.Tk()
-    root.withdraw()
-    folder_path = args.input_folder if args.input_folder else filedialog.askdirectory(title="Select Folder with Textures")
-    if not folder_path:
-        logger.info("no folder selected exiting")
-        return
+    if args.input_folder:
+        folder_path = args.input_folder
+        if not os.path.isdir(folder_path):
+            logger.error(f"Invalid folder path: {folder_path}")
+            return
 
-    processor = TextureProcessor(
-        folder_path,
-        max_workers=os.cpu_count() or 1,
-        png_optimize=False,
-        tarkin_mode=args.tarkin
-    )
-    
-    start_time = time.time()
-    successful, failed, skipped = processor.process_all()
-    end_time = time.time()
-    
-    elapsed_time = end_time - start_time
-    formatted_time = format_execution_time(elapsed_time)
+        processor = TextureProcessor(
+            folder_path,
+            max_workers=os.cpu_count() or 1,
+            png_optimize=False,
+            tarkin_mode=args.tarkin
+        )
 
-    result_message = f"Successful: {successful}\nFailed: {failed}\nSkipped: {skipped}\nExecution Time: {formatted_time}"
-    logger.info(f"Processing complete. Successful: {successful} Failed: {failed} Skipped: {skipped} time: {formatted_time}")
-    #messagebox.showinfo("Complete", result_message)
-    
-    root.destroy()
-    exit(0)
+        start_time = time.time()
+        successful, failed, skipped = processor.process_all()
+        end_time = time.time()
+
+        elapsed_time = end_time - start_time
+        formatted_time = format_execution_time(elapsed_time)
+
+        result_message = f"Successful: {successful}\nFailed: {failed}\nSkipped: {skipped}\nExecution Time: {formatted_time}"
+        logger.info(f"Processing complete. Successful: {successful} Failed: {failed} Skipped: {skipped} time: {formatted_time}")
+
+    else:
+        app = TextureProcessorApp()
+        if args.tarkin:
+            app.tarkin_mode.set(True)
+        app.mainloop()
 
 if __name__ == "__main__":
     try:
