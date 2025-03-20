@@ -444,6 +444,9 @@ def main():
         app.mainloop()
 
 if __name__ == "__main__":
+    from multiprocessing import freeze_support
+    freeze_support()
+
     try:
         main()
     except Exception as e:
