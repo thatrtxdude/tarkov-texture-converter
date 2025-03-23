@@ -4,6 +4,7 @@ import argparse
 import logging
 import signal
 import time
+import json
 from PIL import Image
 import numpy as np
 import tkinter as tk
@@ -42,7 +43,7 @@ class TextureProcessor:
         os.makedirs(self.output_folder, exist_ok=True)
         logger.info(f"output folder {self.output_folder}")
         if self.tarkin_mode:
-            logger.info("running in tarkin/specglos mode")
+            logger.info("running in SPECGLOS (Tarkin) mode")
 
     def _get_unique_output_folder(self) -> str:
         base_output = os.path.join(self.input_folder, "converted_textures")
@@ -257,6 +258,70 @@ class TextureProcessor:
 
         return (successful_count, failed_count, skipped_count)
 
+def insert_suffix(filename: str, suffix: str) -> str:
+    base, ext = os.path.splitext(filename)
+    return f"{base}{suffix}{ext}"
+
+def update_gltf_files(input_folder: str, output_folder: str):
+    for entry in os.scandir(input_folder):
+        if entry.is_file() and entry.name.lower().endswith(".gltf"):
+            gltf_path = os.path.join(input_folder, entry.name)
+            logger.info(f"Updating GLTF file: {gltf_path}")
+            try:
+                with open(gltf_path, "r") as f:
+                    gltf_data = json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to load {gltf_path}: {e}")
+                continue
+
+            materials = gltf_data.get("materials", [])
+            images = gltf_data.get("images", [])
+            textures = gltf_data.get("textures", [])
+            updated = False
+
+            for mat in materials:
+                extensions = mat.get("extensions", {})
+                specGloss = extensions.get("KHR_materials_pbrSpecularGlossiness")
+                if specGloss:
+                    logger.info(f"Processing material '{mat.get('name', 'Unnamed')}' for conversion")
+                    extensions.pop("KHR_materials_pbrSpecularGlossiness")
+                    pbr = {}
+                    if "diffuseTexture" in specGloss:
+                        dt_info = specGloss["diffuseTexture"]
+                        dt_index = dt_info.get("index")
+                        if dt_index is not None and dt_index < len(textures):
+                            tex_entry = textures[dt_index]
+                            img_index = tex_entry.get("source")
+                            if img_index is not None and img_index < len(images):
+                                old_uri = images[img_index].get("uri", "")
+                                new_uri = insert_suffix(old_uri, "_color")
+                                images[img_index]["uri"] = os.path.join(os.path.basename(output_folder), os.path.basename(new_uri))
+                                pbr["baseColorTexture"] = {"index": dt_index, "texCoord": dt_info.get("texCoord", 0)}
+                    if "specularGlossinessTexture" in specGloss:
+                        sgt_info = specGloss["specularGlossinessTexture"]
+                        sgt_index = sgt_info.get("index")
+                        if sgt_index is not None and sgt_index < len(textures):
+                            tex_entry = textures[sgt_index]
+                            img_index = tex_entry.get("source")
+                            if img_index is not None and img_index < len(images):
+                                old_uri = images[img_index].get("uri", "")
+                                new_uri = insert_suffix(old_uri, "_roughness")
+                                images[img_index]["uri"] = os.path.join(os.path.basename(output_folder), os.path.basename(new_uri))
+                                pbr["metallicRoughnessTexture"] = {"index": sgt_index, "texCoord": sgt_info.get("texCoord", 0)}
+                    mat["pbrMetallicRoughness"] = pbr
+                    updated = True
+
+            if updated:
+                base, ext = os.path.splitext(entry.name)
+                new_filename = f"{base}_converted{ext}"
+                new_path = os.path.join(input_folder, new_filename)
+                try:
+                    with open(new_path, "w") as f:
+                        json.dump(gltf_data, f, indent=2)
+                    logger.info(f"Updated GLTF saved as {new_path}")
+                except Exception as e:
+                    logger.error(f"Failed to write updated GLTF to {new_path}: {e}")
+
 class TextureProcessorApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -370,6 +435,10 @@ class TextureProcessorApp(tk.Tk):
 
             messagebox.showinfo("Processing Complete", result_message)
 
+            # If in SPECGLOS mode, update any .gltf files in the input folder
+            if processor.tarkin_mode:
+                update_gltf_files(processor.input_folder, processor.output_folder)
+
             output_folder = processor.output_folder
             if os.path.exists(output_folder) and successful > 0:
                 if sys.platform == 'win32':
@@ -436,6 +505,9 @@ def main():
 
         result_message = f"Successful: {successful}\nFailed: {failed}\nSkipped: {skipped}\nExecution Time: {formatted_time}"
         logger.info(f"Processing complete. Successful: {successful} Failed: {failed} Skipped: {skipped} time: {formatted_time}")
+
+        if processor.tarkin_mode:
+            update_gltf_files(folder_path, processor.output_folder)
 
     else:
         app = TextureProcessorApp()
