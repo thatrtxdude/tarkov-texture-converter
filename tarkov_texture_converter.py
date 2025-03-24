@@ -187,6 +187,139 @@ class TextureProcessor:
             logger.error(f"error processing {os.path.basename(input_path)}: {e}")
             return ("failed", str(e))
 
+    @staticmethod
+    def process_texture_return(input_path: str, png_optimize: bool, tarkin_mode: bool) -> Tuple[str, str, Optional[dict]]:
+        try:
+            with Image.open(input_path) as img:
+                img = img.convert('RGBA') if img.mode != 'RGBA' else img
+                img_array = np.asarray(img)
+            filename = os.path.basename(input_path)
+            texture_type = TextureProcessor._get_texture_type(filename, tarkin_mode)
+            base_name = os.path.splitext(filename)[0]
+            if texture_type is None:
+                return ("skipped", base_name, None)
+            data = {}
+            if texture_type == TextureType.DIFFUSE:
+                if tarkin_mode:
+                    data["color"] = TextureProcessor._process_diffuse_map_tarkin(img_array)
+                else:
+                    color_array, alpha_array = TextureProcessor._process_diffuse_map_standard(img_array)
+                    data["color"] = color_array
+                    data["alpha"] = alpha_array
+            elif texture_type == TextureType.SPECGLOS:
+                specular, roughness = TextureProcessor._process_specglos_map_split(img_array)
+                data["spec"] = specular
+                data["roughness"] = roughness
+            elif texture_type == TextureType.NORMAL:
+                if tarkin_mode:
+                    processed_array = TextureProcessor._process_normal_map_tarkin(img_array)
+                else:
+                    processed_array = TextureProcessor._process_normal_map_standard(img_array)
+                data["converted"] = processed_array
+            elif texture_type == TextureType.GLOSS:
+                processed_array = TextureProcessor._process_gloss_map(img_array)
+                data["roughness"] = processed_array
+            else:
+                return ("failed", base_name, "unknown texture type")
+            return ("success", base_name, data)
+        except Exception as e:
+            logger.error(f"error processing {os.path.basename(input_path)}: {e}")
+            return ("failed", os.path.basename(input_path), str(e))
+
+    def batch_write(self, results: list):
+        for status, base_name, data in results:
+            if status != "success" or data is None:
+                continue
+            for key, img_array in data.items():
+                if key == "color":
+                    out_name = f"{base_name}_color.png"
+                elif key == "alpha":
+                    out_name = f"{base_name}_alpha.png"
+                elif key == "spec":
+                    out_name = f"{base_name}_spec.png"
+                elif key == "roughness":
+                    out_name = f"{base_name}_roughness.png"
+                elif key == "converted":
+                    out_name = f"{base_name}_converted.png"
+                else:
+                    continue
+                out_path = os.path.join(self.output_folder, out_name)
+                try:
+                    Image.fromarray(img_array, 'RGBA').save(out_path, 'PNG', optimize=self.png_optimize)
+                except Exception as e:
+                    logger.error(f"Failed saving {out_path}: {e}")
+
+    def process_all_batch(self, progress_callback=None) -> Tuple[int, int, int]:
+        filenames = []
+        with os.scandir(self.input_folder) as entries:
+            for entry in entries:
+                if entry.is_file():
+                    ext = os.path.splitext(entry.name.lower())[1]
+                    if ext in self.SUPPORTED_FORMATS:
+                        filenames.append(entry.name)
+        if not filenames:
+            logger.info("no supported files found")
+            return (0, 0, 0)
+
+        logger.info(f"Processing {len(filenames)} files with {self.max_workers} workers (batch mode)")
+        results = []
+        successful_count = 0
+        failed_count = 0
+        skipped_count = 0
+        total_files = len(filenames)
+        processed_files = 0
+
+        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(
+                    TextureProcessor.process_texture_return,
+                    os.path.join(self.input_folder, filename),
+                    self.png_optimize,
+                    self.tarkin_mode
+                ): filename for filename in filenames
+            }
+            if progress_callback:
+                for future in as_completed(futures):
+                    filename = futures[future]
+                    try:
+                        status, base_name, res = future.result()
+                        results.append((status, base_name, res))
+                        if status == "success":
+                            successful_count += 1
+                        elif status == "failed":
+                            failed_count += 1
+                            logger.error(f"Failed {filename}: {res}")
+                        elif status == "skipped":
+                            skipped_count += 1
+                            logger.info(f"skipped {filename}")
+                    except Exception as e:
+                        failed_count += 1
+                        logger.error(f"unexpected error in {filename}: {e}")
+                    processed_files += 1
+                    progress_callback(processed_files, total_files)
+            else:
+                with tqdm(total=total_files, desc="Processing Textures") as pbar:
+                    for future in as_completed(futures):
+                        filename = futures[future]
+                        try:
+                            status, base_name, res = future.result()
+                            results.append((status, base_name, res))
+                            if status == "success":
+                                successful_count += 1
+                            elif status == "failed":
+                                failed_count += 1
+                                logger.error(f"Failed {filename}: {res}")
+                            elif status == "skipped":
+                                skipped_count += 1
+                                logger.info(f"skipped {filename}")
+                        except Exception as e:
+                            failed_count += 1
+                            logger.error(f"unexpected error in {filename}: {e}")
+                        pbar.update(1)
+        # Batch I/O: save all processed images after conversion
+        self.batch_write(results)
+        return (successful_count, failed_count, skipped_count)
+
     def process_all(self, progress_callback=None) -> Tuple[int, int, int]:
         filenames = []
         with os.scandir(self.input_folder) as entries:
@@ -284,6 +417,7 @@ def update_gltf_files(input_folder: str, output_folder: str):
                 specGloss = extensions.get("KHR_materials_pbrSpecularGlossiness")
                 if specGloss:
                     logger.info(f"Processing material '{mat.get('name', 'Unnamed')}' for conversion")
+                    # Remove the old specglos entry and create a new PBR entry
                     extensions.pop("KHR_materials_pbrSpecularGlossiness")
                     pbr = {}
                     if "diffuseTexture" in specGloss:
@@ -295,6 +429,7 @@ def update_gltf_files(input_folder: str, output_folder: str):
                             if img_index is not None and img_index < len(images):
                                 old_uri = images[img_index].get("uri", "")
                                 new_uri = insert_suffix(old_uri, "_color")
+                                # Using only base names makes the URI portable:
                                 images[img_index]["uri"] = os.path.join(os.path.basename(output_folder), os.path.basename(new_uri))
                                 pbr["baseColorTexture"] = {"index": dt_index, "texCoord": dt_info.get("texCoord", 0)}
                     if "specularGlossinessTexture" in specGloss:
@@ -308,14 +443,17 @@ def update_gltf_files(input_folder: str, output_folder: str):
                                 new_uri = insert_suffix(old_uri, "_roughness")
                                 images[img_index]["uri"] = os.path.join(os.path.basename(output_folder), os.path.basename(new_uri))
                                 pbr["metallicRoughnessTexture"] = {"index": sgt_index, "texCoord": sgt_info.get("texCoord", 0)}
-                    mat["pbrMetallicRoughness"] = pbr
-                    updated = True
+                    # Overwrite or add the PBR info if any texture was updated
+                    if pbr:
+                        mat["pbrMetallicRoughness"] = pbr
+                        updated = True
 
             if updated:
                 base, ext = os.path.splitext(entry.name)
                 new_filename = f"{base}_converted{ext}"
                 new_path = os.path.join(input_folder, new_filename)
                 try:
+                    # Optionally, backup the original file here
                     with open(new_path, "w") as f:
                         json.dump(gltf_data, f, indent=2)
                     logger.info(f"Updated GLTF saved as {new_path}")
