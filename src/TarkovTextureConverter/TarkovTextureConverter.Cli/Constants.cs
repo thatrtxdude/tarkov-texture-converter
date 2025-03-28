@@ -11,7 +11,7 @@ public static class Constants
 
     public const string DefaultOutputSubfolder = "converted_textures";
 
-    public const int PngCompressionDefault = 1; 
+    public const int PngCompressionDefault = 0; 
     public const int PngCompressionOptimized = 9; 
 
     public static int RecommendedWorkers => Environment.ProcessorCount > 0 ? Environment.ProcessorCount : 1;
