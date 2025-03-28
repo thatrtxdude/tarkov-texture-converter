@@ -2,7 +2,6 @@ using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using System.Text.Json.Nodes; // Requires .NET 6+ for mutable JSON DOM
 
-
 namespace TarkovTextureConverter.Cli;
 
 public static class GltfUtils

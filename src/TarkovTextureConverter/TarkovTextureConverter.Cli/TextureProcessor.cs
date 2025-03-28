@@ -653,11 +653,9 @@ public class TextureProcessor : IDisposable
         List<string> inputFiles;
         try
         {
-
             inputFiles = Directory.EnumerateFiles(InputFolder)
                 .Where(f => Constants.SupportedFormats.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase) && !Path.GetFileName(f).StartsWith('.'))
                 .ToList();
-
             _logger.LogInformation("Found {Count} supported image files.", inputFiles.Count);
         }
         catch (Exception ex) when (ex is DirectoryNotFoundException || ex is IOException || ex is UnauthorizedAccessException)
@@ -665,13 +663,11 @@ public class TextureProcessor : IDisposable
             _logger.LogError(ex, "Error scanning input folder {InputFolder}", InputFolder);
             return (0, 0, 0);
         }
-
         if (inputFiles.Count == 0)
         {
             _logger.LogWarning("No supported image files found in {InputFolder}", InputFolder);
             return (0, 0, 0);
         }
-
         _logger.LogInformation("Starting parallel processing with {MaxWorkers} workers...", MaxWorkers);
 
         var results = new ConcurrentBag<FileProcessResult>();
@@ -690,24 +686,19 @@ public class TextureProcessor : IDisposable
         {
             await Parallel.ForEachAsync(inputFiles, parallelOptions, async (filePath, token) =>
             {
-
-                 FileProcessResult result = await Task.Run(() => ProcessTextureReturnData(filePath), token);
-                 results.Add(result);
-
-                 int currentProcessed = Interlocked.Increment(ref processedCount);
-                 progress?.Report((currentProcessed, totalFiles));
-
+                FileProcessResult result = await Task.Run(() => ProcessTextureReturnData(filePath), token);
+                results.Add(result);
+                int currentProcessed = Interlocked.Increment(ref processedCount);
+                progress?.Report((currentProcessed, totalFiles));
             });
         }
         catch (OperationCanceledException)
         {
-             _logger.LogWarning("Processing was cancelled.");
-
+            _logger.LogWarning("Processing was cancelled.");
         }
         catch (Exception ex)
         {
-             _logger.LogCritical(ex, "Unhandled exception during parallel processing.");
-
+            _logger.LogCritical(ex, "Unhandled exception during parallel processing.");
         }
 
         stopwatch.Stop();
