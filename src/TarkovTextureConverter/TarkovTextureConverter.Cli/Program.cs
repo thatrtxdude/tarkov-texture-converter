@@ -125,7 +125,7 @@ class Program
             logger.LogInformation("  Total Time:    {FormattedTime}", formattedTime);
             logger.LogInformation("------------------------------------------------------------");
 
-            if (processor.TarkinMode && (successful > 0 || failed > 0 || skipped > 0)) 
+            if (processor.TarkinMode && (successful > 0 || failed > 0 || skipped > 0))
             {
                  if (cancellationToken.IsCancellationRequested)
                  {
@@ -134,9 +134,10 @@ class Program
                  else
                  {
                     logger.LogInformation("Tarkin mode enabled, running GLTF update check...");
-                    var gltfLogger = loggerFactory.CreateLogger("GltfUtils");
+                    var gltfLogger = loggerFactory.CreateLogger("GltfUtils"); // Keep using specific logger
 
-                    await Task.Run(() => GltfUtils.UpdateGltfFiles(processor.InputFolder, processor.OutputFolder, gltfLogger), cancellationToken);
+                    await GltfUtils.UpdateGltfFilesAsync(processor.InputFolder, processor.OutputFolder, gltfLogger, cancellationToken);
+
                     logger.LogInformation("GLTF update check finished.");
                  }
             }

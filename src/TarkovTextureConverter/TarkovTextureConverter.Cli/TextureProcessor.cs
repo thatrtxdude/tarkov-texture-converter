@@ -1,7 +1,13 @@
 using Microsoft.Extensions.Logging;
-using OpenCvSharp; 
-using System.Collections.Concurrent; 
-using System.Diagnostics; 
+using OpenCvSharp;
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace TarkovTextureConverter.Cli;
 
@@ -14,7 +20,7 @@ public class TextureProcessor : IDisposable
 
     public string InputFolder { get; }
     public string OutputFolder { get; }
-    public int MaxWorkers { get; } 
+    public int MaxWorkers { get; }
     public bool TarkinMode => _args.TarkinMode;
 
     public TextureProcessor(CliArguments args, ILoggerFactory loggerFactory, CancellationToken cancellationToken)
@@ -47,11 +53,11 @@ public class TextureProcessor : IDisposable
         string baseOutput = Path.Combine(inputPath, Constants.DefaultOutputSubfolder);
         string outputFolder = baseOutput;
         int counter = 1;
-        while (Directory.Exists(outputFolder) || File.Exists(outputFolder)) 
+        while (Directory.Exists(outputFolder) || File.Exists(outputFolder))
         {
             outputFolder = $"{baseOutput}_{counter}";
             counter++;
-            if (counter > 1000) 
+            if (counter > 1000)
             {
                 throw new IOException($"Could not find a unique output folder name near {baseOutput} after {counter} attempts.");
             }
@@ -91,57 +97,46 @@ public class TextureProcessor : IDisposable
                 case "g":
                 case "gloss":
                 case "gls":
-                    return tarkinMode ? null : TextureType.Gloss; 
+                    return tarkinMode ? null : TextureType.Gloss;
                 case "sg":
                 case "specglos":
-                    return tarkinMode ? TextureType.SpecGlos : null; 
+                    return tarkinMode ? TextureType.SpecGlos : null;
             }
         }
 
-        if (tarkinMode)
-        {
-
-            return null;
-        }
-        else
-        {
-
-            return TextureType.Normal;
-        }
+        return tarkinMode ? null : TextureType.Normal;
     }
 
     private static Mat? LoadImage(string inputPath, ILogger logger)
     {
         try
         {
-
             Mat img = Cv2.ImRead(inputPath, ImreadModes.Unchanged);
 
             if (img == null || img.Empty())
             {
                 logger.LogError("Failed to load image (OpenCV returned null/empty): {InputPath}", inputPath);
-
                 return null;
             }
 
             Mat rgbaImg;
             int channels = img.Channels();
 
-            if (channels == 1) 
+            if (channels == 1)
             {
                 rgbaImg = new Mat();
                 Cv2.CvtColor(img, rgbaImg, ColorConversionCodes.GRAY2BGRA);
-                img.Dispose(); 
+                img.Dispose();
             }
-            else if (channels == 3) 
+            else if (channels == 3)
             {
                 rgbaImg = new Mat();
                 Cv2.CvtColor(img, rgbaImg, ColorConversionCodes.BGR2BGRA);
-                img.Dispose(); 
+                img.Dispose();
             }
-            else if (channels == 4) 
+            else if (channels == 4)
             {
-                rgbaImg = img; 
+                rgbaImg = img;
             }
             else
             {
@@ -150,7 +145,7 @@ public class TextureProcessor : IDisposable
                 return null;
             }
 
-            return rgbaImg; 
+            return rgbaImg;
         }
         catch (Exception ex)
         {
@@ -164,18 +159,18 @@ public class TextureProcessor : IDisposable
         if (imgArray.Channels() != 4)
         {
             logger.LogWarning("Standard normal map processing expects 4 channels (BGRA) but got {Channels}. Attempting conversion.", imgArray.Channels());
-            return imgArray.Clone(); 
+            return imgArray.Clone();
         }
 
         Mat processed = new Mat(imgArray.Rows, imgArray.Cols, MatType.CV_8UC4);
-        Mat[] channels = Cv2.Split(imgArray); 
+        Mat[] channels = Cv2.Split(imgArray);
         try
         {
             Mat[] outputChannels = new Mat[4];
-            outputChannels[0] = channels[3];       
-            outputChannels[1] = channels[1];       
-            outputChannels[2] = new Mat(imgArray.Size(), MatType.CV_8UC1, Scalar.All(255)); 
-            outputChannels[3] = new Mat(imgArray.Size(), MatType.CV_8UC1, Scalar.All(255)); 
+            outputChannels[0] = channels[3];
+            outputChannels[1] = channels[1];
+            outputChannels[2] = new Mat(imgArray.Size(), MatType.CV_8UC1, Scalar.All(255));
+            outputChannels[3] = new Mat(imgArray.Size(), MatType.CV_8UC1, Scalar.All(255));
 
             Cv2.Merge(outputChannels, processed);
 
@@ -187,19 +182,18 @@ public class TextureProcessor : IDisposable
             foreach(var ch in channels) ch.Dispose();
         }
 
-        return processed; 
+        return processed;
     }
 
     private static Mat ProcessNormalMapTarkin(Mat imgArray, ILogger logger)
     {
-
-        Mat processed = imgArray.Clone(); 
+        Mat processed = imgArray.Clone();
         if (processed.Channels() == 4)
         {
             Mat[] channels = Cv2.Split(processed);
             try
             {
-                channels[3].SetTo(Scalar.All(255)); 
+                channels[3].SetTo(Scalar.All(255));
                 Cv2.Merge(channels, processed);
             }
             finally
@@ -207,12 +201,12 @@ public class TextureProcessor : IDisposable
                 foreach(var ch in channels) ch.Dispose();
             }
         }
-        else if (processed.Channels() == 3) 
+        else if (processed.Channels() == 3)
         {
             logger.LogWarning("Tarkin normal map processing received 3 channels, converting to BGRA.");
             Mat tempRgba = new Mat();
             Cv2.CvtColor(processed, tempRgba, ColorConversionCodes.BGR2BGRA);
-            processed.Dispose(); 
+            processed.Dispose();
             processed = tempRgba;
 
             Mat[] channels = Cv2.Split(processed);
@@ -231,39 +225,34 @@ public class TextureProcessor : IDisposable
 
     private static (Mat color, Mat? alpha) ProcessDiffuseMapStandard(Mat imgArray, ILogger logger)
     {
-
         if (imgArray.Channels() != 4)
         {
-
             logger.LogError("Diffuse map standard processing expects 4 channels (BGRA), got {Channels}.", imgArray.Channels());
-
             return (imgArray.Clone(), null);
         }
 
         Mat colorOnly = new Mat();
         Mat? alphaMap = null;
-        Mat[] channels = Cv2.Split(imgArray); 
+        Mat[] channels = Cv2.Split(imgArray);
 
         try
         {
-
             using (Mat solidAlpha = new Mat(imgArray.Size(), MatType.CV_8UC1, Scalar.All(255)))
             {
                 Mat[] colorChannels = { channels[0], channels[1], channels[2], solidAlpha };
                 Cv2.Merge(colorChannels, colorOnly);
-            } 
+            }
 
             Cv2.MinMaxLoc(channels[3], out double minVal, out double maxVal);
 
-            if (minVal < 255) 
+            if (minVal < 255)
             {
-
                 alphaMap = new Mat();
                 using (Mat solidAlpha = new Mat(imgArray.Size(), MatType.CV_8UC1, Scalar.All(255)))
                 {
                     Mat[] alphaChannels = { channels[3], channels[3], channels[3], solidAlpha };
                     Cv2.Merge(alphaChannels, alphaMap);
-                } 
+                }
             }
         }
         finally
@@ -276,11 +265,10 @@ public class TextureProcessor : IDisposable
 
     private static Mat ProcessDiffuseMapTarkin(Mat imgArray, ILogger logger)
     {
-
         Mat colorOnly = new Mat();
         if (imgArray.Channels() == 4)
         {
-            Mat[] channels = Cv2.Split(imgArray); 
+            Mat[] channels = Cv2.Split(imgArray);
             try
             {
                 using (Mat solidAlpha = new Mat(imgArray.Size(), MatType.CV_8UC1, Scalar.All(255)))
@@ -294,16 +282,15 @@ public class TextureProcessor : IDisposable
                 foreach(var ch in channels) ch.Dispose();
             }
         }
-        else if (imgArray.Channels() == 3) 
+        else if (imgArray.Channels() == 3)
         {
             logger.LogWarning("Tarkin diffuse processing received 3 channels, converting to BGRA.");
             Cv2.CvtColor(imgArray, colorOnly, ColorConversionCodes.BGR2BGRA);
-
         }
         else
         {
             logger.LogError("Cannot process Tarkin diffuse map with {Channels} channels.", imgArray.Channels());
-            return imgArray.Clone(); 
+            return imgArray.Clone();
         }
         return colorOnly;
     }
@@ -312,7 +299,7 @@ public class TextureProcessor : IDisposable
     {
         Mat sourceMat = imgArray;
         bool sourceNeedsDispose = false;
-        if (imgArray.Channels() == 3) 
+        if (imgArray.Channels() == 3)
         {
             logger.LogWarning("Gloss map processing received 3 channels, converting to BGRA.");
             sourceMat = new Mat();
@@ -322,30 +309,28 @@ public class TextureProcessor : IDisposable
         else if (imgArray.Channels() != 4)
         {
             logger.LogError("Gloss map processing requires 3 or 4 channels, got {Channels}.", imgArray.Channels());
-            return imgArray.Clone(); 
+            return imgArray.Clone();
         }
 
         Mat roughnessMap = new Mat();
         try
         {
-             Mat invertedBgr = new Mat();
-             Mat[] channels = Cv2.Split(sourceMat); 
+             Mat[] channels = Cv2.Split(sourceMat);
              try
              {
                  using Mat bgr = new Mat(), inverted = new Mat();
                  Cv2.Merge(new[] { channels[0], channels[1], channels[2] }, bgr);
-                 Cv2.BitwiseNot(bgr, inverted); 
-                 Mat[] invertedChannels = Cv2.Split(inverted); 
+                 Cv2.BitwiseNot(bgr, inverted);
+                 Mat[] invertedChannels = Cv2.Split(inverted);
                  try
                  {
-
                     Mat roughnessChannel = invertedChannels[2];
 
                     using (Mat solidAlpha = new Mat(sourceMat.Size(), MatType.CV_8UC1, Scalar.All(255)))
                     {
                         Mat[] roughnessOutputChannels = { roughnessChannel, roughnessChannel, roughnessChannel, solidAlpha };
                         Cv2.Merge(roughnessOutputChannels, roughnessMap);
-                    } 
+                    }
                  }
                  finally
                  {
@@ -362,79 +347,91 @@ public class TextureProcessor : IDisposable
             if (sourceNeedsDispose) sourceMat.Dispose();
         }
 
-        return roughnessMap; 
+        return roughnessMap;
     }
 
     private static (Mat specular, Mat roughness) ProcessSpecGlosMapSplit(Mat imgArray, ILogger logger)
     {
-
         if (imgArray.Channels() != 4)
         {
             logger.LogError("SPECGLOS map processing requires 4 channels (BGRA), got {Channels}.", imgArray.Channels());
-
              return (imgArray.Clone(), imgArray.Clone());
         }
 
         Mat specularMap = new Mat();
         Mat roughnessMap = new Mat();
-        Mat[] channels = Cv2.Split(imgArray); 
+        Mat[] channels = Cv2.Split(imgArray);
 
         try
         {
-
             using (Mat solidAlphaSpec = new Mat(imgArray.Size(), MatType.CV_8UC1, Scalar.All(255)))
             {
                 Mat[] specChannels = { channels[0], channels[1], channels[2], solidAlphaSpec };
                 Cv2.Merge(specChannels, specularMap);
-            } 
+            }
 
-            using (Mat invertedAlpha = new Mat()) 
+            using (Mat invertedAlpha = new Mat())
             {
-                Cv2.BitwiseNot(channels[3], invertedAlpha); 
+                Cv2.BitwiseNot(channels[3], invertedAlpha);
                 using (Mat solidAlphaRough = new Mat(imgArray.Size(), MatType.CV_8UC1, Scalar.All(255)))
                 {
                      Mat[] roughChannels = { invertedAlpha, invertedAlpha, invertedAlpha, solidAlphaRough };
                      Cv2.Merge(roughChannels, roughnessMap);
-                } 
-            } 
+                }
+            }
         }
         finally
         {
             foreach (var ch in channels) ch.Dispose();
         }
 
-        return (specularMap, roughnessMap); 
+        return (specularMap, roughnessMap);
     }
 
-    private static void SaveImage(Mat imageArray, string outputPath, int compression, ILogger logger)
+
+    private async Task SaveImageAsync(Mat imageArray, string outputPath, int compression, ILogger logger, CancellationToken cancellationToken)
     {
         string outputDir = Path.GetDirectoryName(outputPath) ?? throw new ArgumentException("Invalid output path");
         string baseName = Path.GetFileNameWithoutExtension(outputPath);
-
         string finalPath = Path.Combine(outputDir, baseName + ".png");
 
         try
         {
-            Directory.CreateDirectory(outputDir); 
+            Directory.CreateDirectory(outputDir);
 
-             if (imageArray.Channels() != 3 && imageArray.Channels() != 4)
-             {
-                 throw new ArgumentException($"Unsupported channel count for saving PNG: {imageArray.Channels()}");
-             }
-
-            int[] compressionParams = { (int)ImwriteFlags.PngCompression, compression }; 
-            bool success = Cv2.ImWrite(finalPath, imageArray, compressionParams);
-
-            if (!success)
+            if (imageArray.Channels() != 3 && imageArray.Channels() != 4)
             {
-                throw new IOException($"OpenCV ImWrite failed to save {finalPath}. Check permissions and disk space.");
+                throw new ArgumentException($"Unsupported channel count for saving PNG: {imageArray.Channels()}");
             }
 
+            int[] compressionParams = { (int)ImwriteFlags.PngCompression, compression };
+            byte[] buffer;
+
+            buffer = await Task.Run(() => {
+                cancellationToken.ThrowIfCancellationRequested();
+                bool success = Cv2.ImEncode(".png", imageArray, out buffer, compressionParams);
+                if (!success || buffer == null || buffer.Length == 0)
+                {
+                    throw new IOException($"OpenCV ImEncode failed for {finalPath}.");
+                }
+                return buffer;
+            }, cancellationToken);
+
+
+            await using (var fs = new FileStream(finalPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true))
+            {
+                await fs.WriteAsync(buffer, 0, buffer.Length, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogWarning("Save operation cancelled for {FinalPath}", finalPath);
+            try { if(File.Exists(finalPath)) File.Delete(finalPath); } catch { /* Ignore */ }
+            throw;
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to save image to {FinalPath} using OpenCV", finalPath);
-
+            logger.LogError(ex, "Failed to save image to {FinalPath}", finalPath);
             throw new IOException($"Failed to save image to {finalPath}: {ex.Message}", ex);
         }
     }
@@ -456,6 +453,7 @@ public class TextureProcessor : IDisposable
             TextureType? textureType = GetTextureType(filename, TarkinMode);
             if (textureType == null)
             {
+                 imgArray?.Dispose();
                 return new FileProcessResult(ProcessStatus.Skipped, filename, Message: $"Skipped (Suffix/Mode combination)");
             }
 
@@ -479,7 +477,7 @@ public class TextureProcessor : IDisposable
                         }
                         break;
 
-                    case TextureType.SpecGlos: 
+                    case TextureType.SpecGlos:
                         var (spec, rough) = ProcessSpecGlosMapSplit(imgArray, _logger);
                         processedDataDict["spec"] = spec;
                         processedDataDict["roughness"] = rough;
@@ -491,12 +489,11 @@ public class TextureProcessor : IDisposable
                             : ProcessNormalMapStandard(imgArray, _logger);
                         break;
 
-                    case TextureType.Gloss: 
+                    case TextureType.Gloss:
                         processedDataDict["roughness"] = ProcessGlossMap(imgArray, _logger);
                         break;
 
                     default:
-
                         _logger.LogError("Internal logic error: Unknown texture type '{TextureType}' for file {Filename}", textureType.Value, filename);
                          processSuccess = false;
                         break;
@@ -506,7 +503,6 @@ public class TextureProcessor : IDisposable
             {
                  _logger.LogError(procEx, "Error during image processing logic for {Filename}", filename);
                  processSuccess = false;
-
                  foreach (var mat in processedDataDict.Values) mat.Dispose();
                  processedDataDict.Clear();
             }
@@ -518,6 +514,7 @@ public class TextureProcessor : IDisposable
             }
             else
             {
+                 if (processedDataDict.Count > 0) foreach (var mat in processedDataDict.Values) mat.Dispose();
                  return new FileProcessResult(ProcessStatus.Failed, filename, Message: $"Processing logic failed or yielded no data");
             }
         }
@@ -528,7 +525,6 @@ public class TextureProcessor : IDisposable
         }
         finally
         {
-
             imgArray?.Dispose();
         }
     }
@@ -538,13 +534,12 @@ public class TextureProcessor : IDisposable
         IProgress<(int current, int total)>? progress = null)
     {
         _logger.LogInformation("Starting batch save...");
-        var saveTasks = new List<Func<Task>>();
         var filesToSave = new ConcurrentBag<(Mat mat, string path, string originalFile)>();
         int totalFilesToAttemptSave = 0;
 
         foreach (var result in results)
         {
-            if (result.Status == ProcessStatus.Success && result.Data != null)
+             if (result.Status == ProcessStatus.Success && result.Data != null)
             {
                 foreach (var kvp in result.Data.Data)
                 {
@@ -556,12 +551,12 @@ public class TextureProcessor : IDisposable
                         "spec" => "_spec",
                         "roughness" => "_roughness",
                         "converted" => "_converted",
-                        _ => "" 
+                        _ => ""
                     };
 
                     if (!string.IsNullOrEmpty(suffix))
                     {
-                        string outFilename = Utils.InsertSuffix($"{result.Data.OriginalBaseName}.png", suffix); 
+                        string outFilename = Utils.InsertSuffix($"{result.Data.OriginalBaseName}.png", suffix);
                         string outPath = Path.Combine(OutputFolder, outFilename);
                         filesToSave.Add((imgArray, outPath, result.OriginalFileName));
                         totalFilesToAttemptSave++;
@@ -569,16 +564,17 @@ public class TextureProcessor : IDisposable
                     else
                     {
                         _logger.LogWarning("Unknown data key '{SuffixKey}' for file {OriginalFile}, cannot determine save suffix. Disposing.", suffixKey, result.OriginalFileName);
-                        imgArray.Dispose(); 
+                        imgArray.Dispose();
                     }
                 }
             }
-            else if (result.Data?.Data != null) 
+            else if (result.Data?.Data != null)
             {
-                 _logger.LogWarning("Disposing Mats from non-successful result for {OriginalFile} ({Status})", result.OriginalFileName, result.Status);
+                 _logger.LogDebug("Disposing Mats from non-successful result for {OriginalFile} ({Status})", result.OriginalFileName, result.Status);
                  foreach(var mat in result.Data.Data.Values) mat.Dispose();
             }
         }
+
 
         if (!filesToSave.Any())
         {
@@ -588,56 +584,65 @@ public class TextureProcessor : IDisposable
 
         _logger.LogInformation("Submitting {Count} save tasks...", totalFilesToAttemptSave);
 
-        var parallelOptions = new ParallelOptions
-        {
-            MaxDegreeOfParallelism = MaxWorkers, 
-            CancellationToken = _cancellationToken
-        };
+        int maxConcurrentSaves = MaxWorkers;
+        using var saveSemaphore = new SemaphoreSlim(maxConcurrentSaves, maxConcurrentSaves);
 
         int successfulSaves = 0;
         int failedSaves = 0;
         int processedCount = 0;
+        var saveTasks = new List<Task>();
+
+        foreach (var item in filesToSave)
+        {
+            await saveSemaphore.WaitAsync(_cancellationToken);
+             _cancellationToken.ThrowIfCancellationRequested();
+
+            var task = Task.Run(async () =>
+            {
+                (Mat mat, string path, string originalFile) = item;
+                try
+                {
+                    await SaveImageAsync(mat, path, _pngCompression, _logger, _cancellationToken);
+                    Interlocked.Increment(ref successfulSaves);
+                }
+                catch (IOException)
+                {
+                    Interlocked.Increment(ref failedSaves);
+                }
+                catch (OperationCanceledException)
+                {
+                    Interlocked.Increment(ref failedSaves);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Unexpected error during save task for {Path}", path);
+                    Interlocked.Increment(ref failedSaves);
+                }
+                finally
+                {
+                    mat.Dispose();
+                    saveSemaphore.Release();
+                    int currentProcessed = Interlocked.Increment(ref processedCount);
+                    progress?.Report((currentProcessed, totalFilesToAttemptSave));
+                }
+            }, _cancellationToken);
+
+            saveTasks.Add(task);
+        }
 
         try
         {
-             await Parallel.ForEachAsync(filesToSave, parallelOptions, async (item, token) =>
-             {
-                 (Mat mat, string path, string originalFile) = item;
-                 try
-                 {
-
-                     await Task.Run(() => SaveImage(mat, path, _pngCompression, _logger), token);
-                     Interlocked.Increment(ref successfulSaves);
-
-                 }
-                 catch (IOException ioEx)
-                 {
-
-                     Interlocked.Increment(ref failedSaves);
-                 }
-                 catch (OperationCanceledException)
-                 {
-                     _logger.LogWarning("Save operation cancelled for {Path}", path);
-                     Interlocked.Increment(ref failedSaves); 
-                 }
-                 catch (Exception ex)
-                 {
-                     _logger.LogError(ex, "Unexpected error saving {Path}", path);
-                     Interlocked.Increment(ref failedSaves);
-                 }
-                 finally
-                 {
-                     mat.Dispose(); 
-                     int currentProcessed = Interlocked.Increment(ref processedCount);
-                     progress?.Report((currentProcessed, totalFilesToAttemptSave));
-                 }
-             });
+            await Task.WhenAll(saveTasks);
         }
         catch (OperationCanceledException)
         {
-            _logger.LogWarning("Save process was cancelled.");
-
+            _logger.LogWarning("Save process was cancelled overall.");
         }
+        catch (Exception ex)
+        {
+             _logger.LogError(ex, "One or more save tasks failed unexpectedly.");
+        }
+
 
         _logger.LogInformation("Batch save complete. Saved: {SuccessfulSaves}, Failed: {FailedSaves}", successfulSaves, failedSaves);
         if (failedSaves > 0)
@@ -718,15 +723,21 @@ public class TextureProcessor : IDisposable
                  _logger.LogInformation("Skipped {Filename}: {Message}", result.OriginalFileName, result.Message ?? "No reason specified");
         }
 
-        if (successfulCount > 0)
+        if (successfulCount > 0 && !_cancellationToken.IsCancellationRequested)
         {
-
-            await SaveProcessedDataAsync(results.ToList(), progress); 
+            await SaveProcessedDataAsync(results.ToList(), progress);
+        }
+        else if (successfulCount > 0 && _cancellationToken.IsCancellationRequested)
+        {
+             _logger.LogWarning("Skipping save stage due to cancellation request.");
+             foreach(var result in results)
+             {
+                  if (result.Data?.Data != null) foreach(var mat in result.Data.Data.Values) mat.Dispose();
+             }
         }
         else
         {
-            _logger.LogInformation("No textures processed successfully, skipping save stage.");
-
+            _logger.LogInformation("No textures processed successfully or cancellation requested, skipping save stage.");
             foreach(var result in results)
             {
                  if (result.Data?.Data != null) foreach(var mat in result.Data.Data.Values) mat.Dispose();
@@ -738,7 +749,6 @@ public class TextureProcessor : IDisposable
 
     public void Dispose()
     {
-
         GC.SuppressFinalize(this);
     }
 }

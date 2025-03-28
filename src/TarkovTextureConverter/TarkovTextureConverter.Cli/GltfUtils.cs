@@ -1,12 +1,19 @@
+// GltfUtils.cs
 using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
-using System.Text.Json.Nodes; // Requires .NET 6+ for mutable JSON DOM
+using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace TarkovTextureConverter.Cli;
 
 public static class GltfUtils
 {
-    public static void UpdateGltfFiles(string inputFolder, string outputFolderAbsPath, ILogger logger)
+    public static async Task UpdateGltfFilesAsync(string inputFolder, string outputFolderAbsPath, ILogger logger, CancellationToken cancellationToken = default)
     {
         if (!Directory.Exists(inputFolder))
         {
@@ -14,7 +21,7 @@ public static class GltfUtils
             return;
         }
 
-        string outputFolderBasename = Path.GetFileName(outputFolderAbsPath); // e.g., "converted_textures" or "converted_textures_1"
+        string outputFolderBasename = Path.GetFileName(outputFolderAbsPath);
         logger.LogInformation("Scanning for GLTF files in '{InputFolder}' to update URIs relative to '{OutputFolderBasename}'...", inputFolder, outputFolderBasename);
 
         int gltfFoundCount = 0;
@@ -24,14 +31,16 @@ public static class GltfUtils
         {
             foreach (var filePath in Directory.EnumerateFiles(inputFolder, "*.gltf", SearchOption.TopDirectoryOnly))
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 gltfFoundCount++;
                 logger.LogInformation("Processing GLTF file: {FilePath}", filePath);
                 bool fileUpdated = false;
 
                 try
                 {
-                    string jsonContent = File.ReadAllText(filePath);
-                    // Use JsonNode for easier modification (.NET 6+)
+                    string jsonContent = await File.ReadAllTextAsync(filePath, cancellationToken);
+
                     JsonNode? rootNode = JsonNode.Parse(jsonContent);
                     if (rootNode == null)
                     {
@@ -49,7 +58,6 @@ public static class GltfUtils
                         continue;
                     }
 
-                    // Map image index to its new URI if updated
                     var updatedImageUriMap = new Dictionary<int, string>();
 
                     for (int i = 0; i < images.Count; i++)
@@ -60,35 +68,32 @@ public static class GltfUtils
                          string? oldUri = uriNode.GetValue<string>();
                          if (string.IsNullOrEmpty(oldUri) || oldUri.StartsWith("data:")) continue;
 
-                         string oldFilename = Path.GetFileName(oldUri.Replace("\\", "/")); // Normalize slashes and get filename
-                         TextureType? texType = TextureProcessor.GetTextureType(oldFilename, tarkinMode: true); // Always Tarkin logic here
+                         string oldFilename = Path.GetFileName(oldUri.Replace("\\", "/"));
+                         TextureType? texType = TextureProcessor.GetTextureType(oldFilename, tarkinMode: true);
 
                          string? newUriBase = texType switch
                          {
                              TextureType.Diffuse => Utils.InsertSuffix(oldFilename, "_color"),
-                             TextureType.SpecGlos => Utils.InsertSuffix(oldFilename, "_roughness"), // Tarkin uses Roughness from SpecGlos for MetallicRoughnessTexture
+                             TextureType.SpecGlos => Utils.InsertSuffix(oldFilename, "_roughness"),
                              TextureType.Normal => Utils.InsertSuffix(oldFilename, "_converted"),
                              _ => null
                          };
 
-                         // Ensure the new base has a .png extension (SaveImage forces it)
                          if (!string.IsNullOrEmpty(newUriBase))
                          {
                             newUriBase = Path.ChangeExtension(newUriBase, ".png");
-                            // Combine with relative output folder path, use forward slashes for GLTF URI
                             string newUri = Path.Combine(outputFolderBasename, newUriBase).Replace("\\", "/");
 
                              if (img["uri"]?.GetValue<string>() != newUri)
                              {
                                  logger.LogInformation("    Image [{ImageIndex}]: Updating URI '{OldUri}' -> '{NewUri}'", i, oldUri, newUri);
-                                 img["uri"] = newUri; // Modify the JsonNode
+                                 img["uri"] = newUri;
                                  updatedImageUriMap[i] = newUri;
                                  fileUpdated = true;
                              }
                          }
-                    } // End image loop
+                    }
 
-                    // Process materials if any images were updated
                     bool specGlossExtensionRemoved = false;
                     if (fileUpdated && materials != null)
                     {
@@ -96,11 +101,9 @@ public static class GltfUtils
                          {
                              JsonObject? mat = materials[matIdx]?.AsObject();
                              if (mat == null) continue;
-
                              string matName = mat["name"]?.GetValue<string>() ?? $"Material_{matIdx}";
                              bool matModified = false;
 
-                             // Check for KHR_materials_pbrSpecularGlossiness and convert
                              if (mat.TryGetPropertyValue("extensions", out JsonNode? extNode) &&
                                  extNode is JsonObject extensions &&
                                  extensions.TryGetPropertyValue("KHR_materials_pbrSpecularGlossiness", out JsonNode? specGlossNode) &&
@@ -109,14 +112,13 @@ public static class GltfUtils
                                   logger.LogInformation("    Material '{MatName}' [{MatIndex}]: Found KHR_materials_pbrSpecularGlossiness.", matName, matIdx);
                                   JsonObject pbrMetallicRoughness = mat["pbrMetallicRoughness"]?.AsObject() ?? new JsonObject();
 
-                                  // Diffuse -> BaseColorTexture
                                   if (specGloss.TryGetPropertyValue("diffuseTexture", out JsonNode? diffTexInfoNode))
                                   {
                                        int? texIndex = diffTexInfoNode?["index"]?.GetValue<int>();
                                        int? sourceImgIndex = GetSourceImageIndex(textures, texIndex);
                                        if (sourceImgIndex.HasValue && updatedImageUriMap.ContainsKey(sourceImgIndex.Value))
                                        {
-                                            pbrMetallicRoughness["baseColorTexture"] = diffTexInfoNode.DeepClone(); // Clone node
+                                            pbrMetallicRoughness["baseColorTexture"] = diffTexInfoNode.DeepClone();
                                             logger.LogDebug("      Mapped diffuseTexture -> baseColorTexture");
                                             matModified = true;
                                        }
@@ -127,56 +129,47 @@ public static class GltfUtils
                                        matModified = true;
                                    }
 
-                                  // SpecularGlossinessTexture -> MetallicRoughnessTexture
-                                  // NOTE: Tarkin conversion generates a Roughness map from the Gloss (alpha).
-                                  // We updated the *original* specGlos image URI to point to this new _roughness.png.
                                   if (specGloss.TryGetPropertyValue("specularGlossinessTexture", out JsonNode? sgTexInfoNode))
                                   {
                                        int? texIndex = sgTexInfoNode?["index"]?.GetValue<int>();
                                        int? sourceImgIndex = GetSourceImageIndex(textures, texIndex);
                                        if (sourceImgIndex.HasValue && updatedImageUriMap.ContainsKey(sourceImgIndex.Value))
                                        {
-                                            // The URI for this texture now points to _roughness.png
                                             pbrMetallicRoughness["metallicRoughnessTexture"] = sgTexInfoNode.DeepClone();
-                                             // Standard PBR defaults when converting from Spec/Gloss
-                                             pbrMetallicRoughness["metallicFactor"] ??= 0.0; // Use ??= to set only if null
+                                             pbrMetallicRoughness["metallicFactor"] ??= 0.0;
                                              pbrMetallicRoughness["roughnessFactor"] ??= 1.0;
                                              logger.LogDebug("      Mapped specularGlossinessTexture -> metallicRoughnessTexture (using generated _roughness map)");
                                              matModified = true;
                                        }
                                   }
-                                   // Add default factors if texture wasn't present but SpecGloss ext was
                                    if (matModified)
                                    {
                                         pbrMetallicRoughness["metallicFactor"] ??= 0.0;
                                         pbrMetallicRoughness["roughnessFactor"] ??= 1.0;
                                    }
 
-                                  // Normal texture - just check if its source image was updated
                                    if (!matModified && mat.TryGetPropertyValue("normalTexture", out JsonNode? normTexInfoNode))
                                    {
                                         int? texIndex = normTexInfoNode?["index"]?.GetValue<int>();
                                         int? sourceImgIndex = GetSourceImageIndex(textures, texIndex);
                                         if (sourceImgIndex.HasValue && updatedImageUriMap.ContainsKey(sourceImgIndex.Value))
                                         {
-                                             matModified = true; // Mark material as modified even if only normal map changed URI
+                                             matModified = true;
                                              logger.LogDebug("      Normal map URI was updated.");
                                         }
                                    }
 
-
                                   if (matModified)
                                   {
-                                       mat["pbrMetallicRoughness"] = pbrMetallicRoughness; // Assign potentially new/modified object
+                                       mat["pbrMetallicRoughness"] = pbrMetallicRoughness;
                                        extensions.Remove("KHR_materials_pbrSpecularGlossiness");
                                        specGlossExtensionRemoved = true;
                                        if (extensions.Count == 0) mat.Remove("extensions");
                                        logger.LogInformation("    Material '{MatName}' [{MatIndex}]: Converted to PBR MetallicRoughness.", matName, matIdx);
                                   }
                              }
-                             else // Check standard PBR materials if their textures were updated
+                             else
                              {
-                                  string[] pbrTextureKeys = { "baseColorTexture", "metallicRoughnessTexture" }; // Add others like occlusionTexture if needed
                                   JsonObject? pbr = mat["pbrMetallicRoughness"]?.AsObject();
                                   JsonNode?[] textureNodes = {
                                        mat["normalTexture"], mat["occlusionTexture"], mat["emissiveTexture"],
@@ -192,37 +185,39 @@ public static class GltfUtils
                                        {
                                            matModified = true;
                                            logger.LogDebug("    Material '{MatName}' [{MatIndex}]: Referenced image URI was updated.", matName, matIdx);
-                                           break; // Found one updated reference, no need to check others for this mat
+                                           break;
                                        }
                                   }
                              }
-                             if(matModified) fileUpdated = true; // Ensure file is marked updated if any material changed
+                             if(matModified) fileUpdated = true;
 
-                         } // End material loop
-                    } // End if(fileUpdated && materials != null)
+                         }
+                    }
 
-                    // Update global extensions lists if SpecGloss was removed
                     if (specGlossExtensionRemoved)
                     {
                         RemoveExtension(rootNode, "extensionsUsed", "KHR_materials_pbrSpecularGlossiness");
                         RemoveExtension(rootNode, "extensionsRequired", "KHR_materials_pbrSpecularGlossiness");
                     }
 
-                    // Save if changes were made
                     if (fileUpdated)
                     {
-                        string outputGltfPath = filePath; // Overwrite original
+                        string outputGltfPath = filePath;
                         logger.LogInformation("  Saving updated GLTF file to: {OutputGltfPath}", outputGltfPath);
                         try
                         {
                             var writeOptions = new JsonSerializerOptions
                             {
                                 WriteIndented = true,
-                                // Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping // If needed for paths/special chars
-                                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Create(System.Text.Unicode.UnicodeRanges.All) // Safer for non-ASCII chars if present
+                                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Create(System.Text.Unicode.UnicodeRanges.All)
                             };
-                            File.WriteAllText(outputGltfPath, rootNode.ToJsonString(writeOptions));
+                            await File.WriteAllTextAsync(outputGltfPath, rootNode.ToJsonString(writeOptions), cancellationToken);
                             updatedGltfCount++;
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            logger.LogWarning("  Writing updated GLTF file cancelled: {OutputGltfPath}", outputGltfPath);
+                            throw;
                         }
                         catch (Exception ex)
                         {
@@ -238,11 +233,20 @@ public static class GltfUtils
                 {
                     logger.LogError(jsonEx, "  Error processing GLTF file {FilePath}", filePath);
                 }
+                catch (OperationCanceledException)
+                {
+                    logger.LogWarning("GLTF processing cancelled for file: {FilePath}", filePath);
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "  Unexpected error processing GLTF file {FilePath}", filePath);
                 }
-            } // End file loop
+            }
+        }
+        catch (OperationCanceledException)
+        {
+             logger.LogWarning("GLTF file scanning/processing was cancelled.");
         }
         catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
         {
@@ -263,26 +267,27 @@ public static class GltfUtils
         }
     }
 
-    // Helper to get the source image index from a texture index
-    private static int? GetSourceImageIndex(JsonArray textures, int? textureIndex)
+    private static int? GetSourceImageIndex(JsonArray? textures, int? textureIndex)
     {
-        if (!textureIndex.HasValue || textureIndex.Value < 0 || textureIndex.Value >= textures.Count)
+        if (textures == null || !textureIndex.HasValue || textureIndex.Value < 0 || textureIndex.Value >= textures.Count)
             return null;
         return textures[textureIndex.Value]?["source"]?.GetValue<int>();
     }
 
-     // Helper to remove an extension string from extensionsUsed/Required arrays
     private static void RemoveExtension(JsonNode root, string arrayName, string extensionToRemove)
     {
          if (root[arrayName] is JsonArray extensionsArray)
          {
-            JsonNode? toRemove = extensionsArray.FirstOrDefault(node => node?.GetValue<string>() == extensionToRemove);
+            JsonNode? toRemove = extensionsArray.ToList().FirstOrDefault(node => node?.GetValue<string>() == extensionToRemove);
             if (toRemove != null)
             {
                 extensionsArray.Remove(toRemove);
                 if (extensionsArray.Count == 0)
                 {
-                    root.AsObject().Remove(arrayName); // Remove empty array property
+                    if(root.AsObject().TryGetPropertyValue(arrayName, out _))
+                    {
+                         root.AsObject().Remove(arrayName);
+                    }
                 }
             }
          }
