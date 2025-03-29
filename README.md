@@ -1,82 +1,55 @@
 # Tarkov Texture Converter
 
-A C# utility for batch processing Unity/Tarkov texture maps with modern parallel processing and built-in GLTF updating support.
+A C# utility for fast, parallel batch conversion of Unity/Tarkov texture maps (Normal, Diffuse, Gloss, SpecGlos). Includes automatic GLTF updating for Tarkin's Item Exporter workflow.
 
-## Overview
+## Key Features
 
-This tool processes texture maps—normal, diffuse, gloss, and specglos—by reorganizing channels, splitting diffuse maps into separate color and, if necessary, alpha images, and converting gloss maps to roughness maps. It also has support for Tarkin's Item Exporter, it automatically converts the SPECGLOS format that gets exported and updates the .gltf files to use the converted textures.
-
-## Features
-
-- **Normal Map Conversion:** Reorganizes normal map channels and ensures RGBA output.
-- **Diffuse Map Processing:** Splits diffuse maps to produce separate color (and optional alpha) images.
-- **Gloss Map Conversion:** Converts gloss maps to roughness maps.
-- **Parallel Processing:** Leverages multi-core processing for faster conversions.
-- **PNG Optimization:** Optionally applies higher PNG compression (at the cost of processing speed).
-- **GLTF Updating:** Automatically revises GLTF files to update texture URIs after conversion (in SPECGLOS mode).
+*   **Normal Maps:** Reorganizes channels (RGBA output).
+*   **Diffuse Maps:** Splits into Color and optional Alpha maps.
+*   **Gloss Maps:** Converts Gloss to Roughness maps (Standard mode only).
+*   **SPECGLOS Mode (`--tarkin`):**
+    *   Processes `_sg` textures (from Tarkin's Item Exporter) into Specular (`_spec.png`) and Roughness (`_roughness.png`) maps.
+    *   Ignores standard Gloss maps (`_g`).
+    *   Outputs only Color (`_color.png`) from Diffuse maps.
+    *   Automatically updates texture paths in `.gltf` files in the input directory.
+*   **Performance:** Uses multi-core processing. Optional higher PNG compression (`--optimize`).
 
 ## Prerequisites
 
-- [.NET 9.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
-- Supported platforms: Windows (win-x64)
+*   [.NET 9.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
+*   Windows (win-x64)
 
-## Build & Run
+## Usage
 
-### Using Visual Studio
+1.  Build the `TarkovTextureConverter.Cli` project (or use the provided `.sln` in Visual Studio).
+2.  Run from the command line within the `src\TarkovTextureConverter\TarkovTextureConverter.Cli` directory:
 
-1. Open the solution file ([TarkovTextureConverter.sln](e:\tarkov-texture-converter\src\TarkovTextureConverter\TarkovTextureConverter.sln)).
-2. Build the solution.
-3. Run the `TarkovTextureConverter.Cli` project.
-
-### Using Command Line
-
-Open a terminal in the `src\TarkovTextureConverter\TarkovTextureConverter.Cli` folder and run:
-
-```sh
-dotnet run --project TarkovTextureConverter.Cli.csproj -- /path/to/textures
-```
+    ```sh
+    dotnet run --project TarkovTextureConverter.Cli.csproj -- <input_folder> [options]
+    ```
 
 ## CLI Options
 
-- **Input Folder:**  
-  Specify the directory containing texture images.  
-  Example: `/path/to/textures`
+*   `<input_folder>`: (Required) Path to the directory containing textures and (optionally) `.gltf` files.
+*   `-t, --tarkin`: Enable SPECGLOS mode for Tarkin's Item Exporter workflow.
+*   `-o, --optimize`: Enable higher (slower) PNG compression.
+*   `-w, --workers <num>`: Set number of CPU worker threads (Default: system core count).
 
-- **SPECGLOS Mode:**  
-  Enable SPECGLOS mode (for use with Tarkin's Item Exporter) using the `--tarkin` (or `-t`) option.  
-  Example:
-  ```sh
-  dotnet run --project TarkovTextureConverter.Cli.csproj -- /path/to/textures --tarkin
-  ```
+## Texture Processing & Output
 
-- **PNG Optimization:**  
-  Enable higher PNG compression with the `--optimize` (or `-o`) flag.
+Textures are identified by suffixes. Output filenames are based on the original name.
 
-- **Workers:**  
-  Set the number of CPU worker threads with the `--workers` (or `-w`) option.  
-  Default is determined by the number of processor cores.
+| Input Suffix                 | Standard Mode Output                     | SPECGLOS Mode (`--tarkin`) Output        |
+| :--------------------------- | :--------------------------------------- | :--------------------------------------- |
+| `_n`, `_normal`, `_nrm`      | `*_converted.png`                        | `*_converted.png`                        |
+| `_d`, `_diff`, `_diffuse`, `_albedo` | `*_color.png` (+ `*_alpha.png` if needed) | `*_color.png`                            |
+| `_g`, `_gloss`               | `*_roughness.png`                        | *Ignored*                                |
+| `_sg`, `_specglos`           | *Ignored*                                | `*_spec.png` + `*_roughness.png`         |
 
-## Output Format
-
-- **Normal Maps:** Output as `*_converted.png`
-- **Diffuse Maps:**  
-  - Standard mode: `*_color.png` + `*_alpha.png`
-  - SPECGLOS mode: Only `*_color.png`
-- **Gloss Maps:** Output as `*_roughness.png` (not processed in SPECGLOS mode)
-- **SPECGLOS Maps:** Output as `*_spec.png` + `*_roughness.png` (when using SPECGLOS mode)
-
-## Texture Type Detection
-
-Texture maps are processed automatically based on file suffixes:
-- **Normal Maps:** `*_n`, `*_normal`, `*_nrm`
-- **Diffuse Maps:** `*_d`, `*_diff`, `*_diffuse`, `*_albedo`
-- **Gloss Maps:** `*_g`, `*_gloss` (ignored in SPECGLOS mode)
-- **SpecGlos Maps:** `*_sg`, `*_specglos` (processed only in SPECGLOS mode)
-
-## Supported Formats
+## Supported Input Formats
 
 PNG, JPG, JPEG, TIF, TIFF, BMP, TGA
 
 ## License
 
-This project is released under the MIT License.
+This project is licensed under the MIT license.
