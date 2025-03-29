@@ -1,28 +1,36 @@
 # Tarkov Texture Converter
-A Python script for batch processing Unity/Tarkov texture maps (normal, diffuse, gloss, specglos) with parallel processing support.
+
+A Python utility for batch processing Unity/Tarkov texture maps with modern parallel processing and improved GLTF updating support.
+
+## Overview
+
+This tool processes texture maps—normal, diffuse, gloss, and specglos—by reorganizing channels, splitting diffuse maps into separate color and alpha images, and converting gloss maps to roughness maps. It also supports specialized SPECGLOS mode, which updates GLTF files to work with exports from Tarkin's Item Exporter.
 
 ## Features
-- Converts normal maps to RGBA format with channel reorganization
-- Splits diffuse maps into color+alpha textures
-- Converts gloss maps to roughness maps
-- Preserves alpha channels
-- Multi-core processing
-- PNG optimization option
+
+- **Normal Map Conversion:** Reorganizes normal map channels and enforces RGBA output.
+- **Diffuse Map Processing:** Splits diffuse maps to output separate color and, if needed, alpha maps.
+- **Gloss Map Conversion:** Converts gloss maps to roughness maps.
+- **Parallel Processing:** Utilizes multi-core processing for faster conversions.
+- **PNG Optimization:** Optionally applies higher PNG compression (at the cost of processing speed).
 
 ## Prerequisites
-- Python 3.7+
-- `Pillow`, `numpy`, `tqdm`
 
-Install dependencies:
+- Python 3.7+
+- Dependencies: `opencv-python`, `numpy`, `tqdm`
+
+Install dependencies with:
+
 ```bash
-pip install pillow numpy tqdm
+pip install opencv-python numpy tqdm
 ```
 
 ## Usage
 ### GUI Mode
 1. Run the script without arguments:
 ```bash
-python tarkov_texture_converter.py
+cd src
+python -m tarkov_texture_converter.main
 ```
 2. Select input folder via GUI dialog
 3. Processing happens automatically with progress visualization
@@ -31,18 +39,22 @@ python tarkov_texture_converter.py
 ### CLI Mode
 Process textures by directly specifying the input folder:
 ```bash
-python tarkov_texture_converter.py /path/to/textures
+cd src
+python -m tarkov_texture_converter.main /path/to/textures
 ```
 
 ### SPECGLOS Mode
 IMPORTANT: This is supposed to be used with this: https://hub.sp-tarkov.com/files/file/2724-tarkin-item-exporter/#overview
 ```bash
-python tarkov_texture_converter.py --tarkin
+cd src
+python -m tarkov_texture_converter.main --tarkin
 ```
 Or with a specific input folder:
 ```bash
-python tarkov_texture_converter.py "/path/to/textures" --tarkin
+cd src
+python -m tarkov_texture_converter.main "/path/to/textures" --tarkin
 ```
+
 ## Output Format
 - Normal maps: `*_converted.png`
 - Diffuse maps: `*_color.png` + `*_alpha.png` (standard mode) or just `*_color.png` (SPECGLOS mode)
