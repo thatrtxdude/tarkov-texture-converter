@@ -28,6 +28,16 @@ A C# utility for fast, parallel batch conversion of Unity/Tarkov texture maps (N
     dotnet run --project TarkovTextureConverter.Cli.csproj -- <input_folder> [options]
     ```
 
+OR
+
+1.  Grab the binaries from the latest release
+2.  Extract the files somewhere
+3.  CD into the directory with the extracted files
+4.  Run following command:
+    ```sh
+    .\TarkovTextureConverter.Cli.exe <input_folder> [options]
+    ```
+
 ## CLI Options
 
 *   `<input_folder>`: (Required) Path to the directory containing textures and (optionally) `.gltf` files.
