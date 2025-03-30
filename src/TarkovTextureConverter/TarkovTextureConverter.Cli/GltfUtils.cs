@@ -202,7 +202,11 @@ public static class GltfUtils
 
                     if (fileUpdated)
                     {
-                        string outputGltfPath = filePath;
+                        // Save updated GLTF file with "_converted" suffix instead of overwriting the original.
+                        string originalFileName = Path.GetFileName(filePath);
+                        string newFileName = Utils.InsertSuffix(originalFileName, "_converted");
+                        string outputGltfPath = Path.Combine(Path.GetDirectoryName(filePath) ?? string.Empty, newFileName);
+
                         logger.LogInformation("  Saving updated GLTF file to: {OutputGltfPath}", outputGltfPath);
                         try
                         {
