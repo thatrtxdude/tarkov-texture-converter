@@ -409,6 +409,12 @@ public class TextureProcessor : IDisposable
 
             buffer = await Task.Run(() => {
                 cancellationToken.ThrowIfCancellationRequested();
+                
+                int[] compressionParams = [ 
+                    (int)ImwriteFlags.PngCompression, compression,
+                    (int)ImwriteFlags.PngStrategy, 3  // Use optimal filtering
+                ];
+                
                 bool success = Cv2.ImEncode(".png", imageArray, out buffer, compressionParams);
                 if (!success || buffer == null || buffer.Length == 0)
                 {
