@@ -1,0 +1,39 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      
+      - name: Restore dependencies
+        run: dotnet restore src/TarkovTextureConverter/TarkovTextureConverter.sln
+      
+      - name: Build and publish
+        run: dotnet publish src/TarkovTextureConverter/TarkovTextureConverter.Cli/TarkovTextureConverter.Cli.csproj -c Release -r win-x64 -p:PublishSingleFile=true --self-contained
+      
+      - name: Zip the published files
+        run: |
+          Compress-Archive -Path src/TarkovTextureConverter/TarkovTextureConverter.Cli/bin/Release/net9.0/win-x64/publish/* -DestinationPath TarkovTextureConverter-win-x64.zip
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: TarkovTextureConverter-win-x64.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
