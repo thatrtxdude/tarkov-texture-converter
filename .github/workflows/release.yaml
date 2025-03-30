@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'  # Trigger on version tags
 
+permissions:
+  contents: write  # This is crucial for creating releases
+
 jobs:
   build:
     runs-on: windows-latest
@@ -35,5 +38,3 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
