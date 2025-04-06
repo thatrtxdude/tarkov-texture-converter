@@ -38,12 +38,18 @@ class Program
              getDefaultValue: () => Constants.RecommendedWorkers,
              description: $"Number of worker processes to use for image processing.\nDefault: {Constants.RecommendedWorkers} (Based on CPU cores)");
 
+        var logLevelOption = new Option<LogLevel>(
+            aliases: new[] { "--log-level", "-l" },
+            description: "Set logging level: None, Critical, Error, Warning, Information, Debug, Trace",
+            getDefaultValue: () => LogLevel.Information);
+
         var rootCommand = new RootCommand("Tarkov Texture Converter: Processes textures and optionally updates GLTF files.")
         {
             inputArgument,
             tarkinOption,
             optimizeOption,
-            workersOption
+            workersOption,
+            logLevelOption
         };
 
         rootCommand.SetHandler(async (InvocationContext context) =>
@@ -52,9 +58,19 @@ class Program
             var tarkinMode = context.ParseResult.GetValueForOption(tarkinOption);
             var optimizePng = context.ParseResult.GetValueForOption(optimizeOption);
             var workers = context.ParseResult.GetValueForOption(workersOption);
+            var logLevel = context.ParseResult.GetValueForOption(logLevelOption);
             var cancellationToken = context.GetCancellationToken(); 
 
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, cancellationToken);
+
+            var loggerFactory = LoggerFactory.Create(builder => {
+                builder.AddConsole(options => {
+                    options.FormatterName = "Simple";
+                });
+                builder.SetMinimumLevel(logLevel);
+            });
+
+            var logger = loggerFactory.CreateLogger<Program>();
 
             var cliArgs = new CliArguments(inputDir, tarkinMode, optimizePng, workers);
             await RunCliAsync(cliArgs, loggerFactory, linkedCts.Token);

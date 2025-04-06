@@ -406,7 +406,8 @@ public class TextureProcessor : IDisposable
                 
                 int[] compressionParams = [ 
                     (int)ImwriteFlags.PngCompression, compression,
-                    (int)ImwriteFlags.PngStrategy, 3  // Use optimal filtering
+                    (int)ImwriteFlags.PngStrategy, 3,  // Use optimal filtering
+                    (int)ImwriteFlags.PngBilevel, 0 // No bilevel encoding
                 ];
                 
                 bool success = Cv2.ImEncode(".png", imageArray, out buffer, compressionParams);

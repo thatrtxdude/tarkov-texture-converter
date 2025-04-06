@@ -15,7 +15,7 @@ public static class GltfUtils
         }
 
         string outputFolderBasename = Path.GetFileName(outputFolderAbsPath);
-        logger.LogInformation("Scanning for GLTF files in '{InputFolder}' to update URIs relative to '{OutputFolderBasename}'...", inputFolder, outputFolderBasename);
+        //logger.LogInformation("Scanning for GLTF files in '{InputFolder}' to update URIs relative to '{OutputFolderBasename}'...", inputFolder, outputFolderBasename);
 
         int gltfFoundCount = 0;
         int updatedGltfCount = 0;
@@ -56,13 +56,13 @@ public static class GltfUtils
         }
         else
         {
-            logger.LogInformation("GLTF Update: Finished processing {GltfFoundCount} GLTF files. Updated {UpdatedGltfCount} files.", gltfFoundCount, updatedGltfCount);
+            //logger.LogInformation("GLTF Update: Finished processing {GltfFoundCount} GLTF files. Updated {UpdatedGltfCount} files.", gltfFoundCount, updatedGltfCount);
         }
     }
 
     private static async Task<bool> ProcessGltfFileAsync(string filePath, string outputFolderBasename, ILogger logger, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Processing GLTF file: {FilePath}", filePath);
+        //logger.LogInformation("Processing GLTF file: {FilePath}", filePath);
         bool fileUpdated = false;
 
         try
@@ -114,7 +114,7 @@ public static class GltfUtils
 
                     if (img["uri"]?.GetValue<string>() != newUri)
                     {
-                        logger.LogInformation("    Image [{ImageIndex}]: Updating URI '{OldUri}' -> '{NewUri}'", i, oldUri, newUri);
+                        //logger.LogInformation("    Image [{ImageIndex}]: Updating URI '{OldUri}' -> '{NewUri}'", i, oldUri, newUri);
                         img["uri"] = newUri;
                         updatedImageUriMap[i] = newUri;
                         fileUpdated = true;
